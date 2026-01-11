@@ -97,6 +97,8 @@ async def async_setup_entry(
         AidenCurrentProfileSensor(coordinator, entry),
     ])
 
+    entities.append(AidenGameHighScoreSensor(coordinator, entry))
+
     _LOGGER.debug(f"Adding {len(entities)} sensor entities")
     async_add_entities(entities, True)
     _LOGGER.info(f"Successfully set up {len(entities)} sensors for Fellow Aiden")
@@ -737,26 +739,44 @@ class AidenCurrentProfileSensor(FellowAidenBaseEntity, SensorEntity):
                     else:
                         detection_method = "first_available"
                         confidence = "low"
-        
+
         attrs = {
             "total_profiles": total_profiles,
             "detection_method": detection_method,
             "confidence": confidence,
         }
-        
+
         # Add last used time if available
         if last_used_time:
             attrs["last_used_time"] = last_used_time
-        
+
         # Add last brew information if available
         last_brew_time = self.coordinator.history_manager.get_last_brew_time()
         if last_brew_time:
             attrs["last_brew_time"] = last_brew_time.isoformat()
-        
+
         # Add profile usage stats
         profile_stats = self.coordinator.history_manager.get_profile_usage_stats()
         if profile_stats:
             attrs["profile_usage_stats"] = profile_stats
             attrs["total_historical_brews"] = sum(profile_stats.values())
-        
+
         return attrs
+
+class AidenGameHighScoreSensor(AidenSensor):
+    """
+    Shows the game high score.
+    """
+
+    def __init__(
+        self,
+        coordinator: FellowAidenDataUpdateCoordinator,
+        entry: ConfigEntry
+    ) -> None:
+        """Initialize the game high score sensor."""
+        super().__init__(coordinator, entry, 'gameHighScore', 'Game High Score', None, 'mdi:counter')
+
+    @property
+    def entity_registry_visible_default(self) -> bool:
+        """Disable the high score sensor visibility by default."""
+        return False
