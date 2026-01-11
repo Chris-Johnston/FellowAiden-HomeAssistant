@@ -37,7 +37,7 @@ async def async_setup_entry(
     """Set up sensors for the Fellow Aiden integration."""
     _LOGGER.debug(f"Setting up sensors for entry {entry.entry_id}")
     coordinator: FellowAidenDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
-    
+
     _LOGGER.debug(f"Coordinator data available: {coordinator.data is not None}")
     if coordinator.data:
         _LOGGER.debug(f"Coordinator data keys: {list(coordinator.data.keys())}")
@@ -96,6 +96,8 @@ async def async_setup_entry(
         AidenMostPopularProfileSensor(coordinator, entry),
         AidenCurrentProfileSensor(coordinator, entry),
     ])
+
+    entities.append(AidenGameHighScoreSensor(coordinator, entry))
 
     _LOGGER.debug(f"Adding {len(entities)} sensor entities")
     async_add_entities(entities, True)
@@ -332,7 +334,7 @@ class AidenLastBrewTimeSensor(FellowAidenBaseEntity, SensorEntity):
     def native_value(self) -> datetime | None:
         """Return the last brew completion time using historical data."""
         from homeassistant.util import dt as dt_util
-        
+
         # Try historical data first, fallback to device data
         historical_time = self.coordinator.history_manager.get_last_brew_time()
         if historical_time:
@@ -340,7 +342,7 @@ class AidenLastBrewTimeSensor(FellowAidenBaseEntity, SensorEntity):
             if historical_time.tzinfo is None:
                 return dt_util.as_local(historical_time)
             return historical_time
-            
+
         # Fallback to device data
         device_config = self.coordinator.data.get("device_config", {})
         end_time_str = device_config.get("brewEndTime")
@@ -383,12 +385,12 @@ class AidenTotalWaterTodaySensor(FellowAidenBaseEntity, SensorEntity):
         # IMPORTANT: Only use historical tracking data, never fallback to device totals
         water_usage = self.coordinator.history_manager.get_water_usage_for_period(1)
         _LOGGER.debug(f"Water usage today from history: {water_usage}L")
-        
+
         # Ensure we never accidentally return device lifetime totals
         if water_usage is None or water_usage < 0:
             _LOGGER.warning("Invalid water usage value from history manager, returning 0.0")
             return 0.0
-            
+
         return water_usage
 
     @property
@@ -426,12 +428,12 @@ class AidenTotalWaterWeekSensor(FellowAidenBaseEntity, SensorEntity):
         # IMPORTANT: Only use historical tracking data, never fallback to device totals
         water_usage = self.coordinator.history_manager.get_water_usage_for_period(7)
         _LOGGER.debug(f"Water usage this week from history: {water_usage}L")
-        
+
         # Ensure we never accidentally return device lifetime totals
         if water_usage is None or water_usage < 0:
             _LOGGER.warning("Invalid water usage value from history manager, returning 0.0")
             return 0.0
-            
+
         return water_usage
 
     @property
@@ -471,12 +473,12 @@ class AidenTotalWaterMonthSensor(FellowAidenBaseEntity, SensorEntity):
         # IMPORTANT: Only use historical tracking data, never fallback to device totals
         water_usage = self.coordinator.history_manager.get_water_usage_for_period(30)
         _LOGGER.debug(f"Water usage this month from history: {water_usage}L")
-        
+
         # Ensure we never accidentally return device lifetime totals
         if water_usage is None or water_usage < 0:
             _LOGGER.warning("Invalid water usage value from history manager, returning 0.0")
             return 0.0
-            
+
         return water_usage
 
     @property
@@ -516,7 +518,7 @@ class AidenAverageBrewDurationSensor(FellowAidenBaseEntity, SensorEntity):
         historical_avg = self.coordinator.history_manager.get_average_brew_duration()
         if historical_avg:
             return historical_avg
-            
+
         # Fallback to last brew duration if no historical data
         device_config = self.coordinator.data.get("device_config", {})
         start_time_str = device_config.get("brewStartTime")
@@ -579,20 +581,20 @@ class AidenMostPopularProfileSensor(FellowAidenBaseEntity, SensorEntity):
         most_popular = self.coordinator.history_manager.get_most_popular_profile()
         if most_popular:
             return most_popular
-            
+
         # Fallback to default or first profile
         data = self.coordinator.data
         if not data or "profiles" not in data or not data["profiles"]:
             return "No profiles available"
-        
+
         # Look for default profile first
         default_profile = next(
-            (p for p in data["profiles"] if p.get("isDefaultProfile")), 
+            (p for p in data["profiles"] if p.get("isDefaultProfile")),
             None
         )
         if default_profile:
             return default_profile.get("title", "Default Profile")
-        
+
         # Otherwise return the first profile
         return data["profiles"][0].get("title", "Profile 1")
 
@@ -603,12 +605,12 @@ class AidenMostPopularProfileSensor(FellowAidenBaseEntity, SensorEntity):
         total_profiles = len(data.get("profiles", [])) if data else 0
         profile_stats = self.coordinator.history_manager.get_profile_usage_stats()
         most_popular = self.coordinator.history_manager.get_most_popular_profile()
-        
+
         attrs = {
             "total_profiles": total_profiles,
             "profile_usage_stats": profile_stats,
         }
-        
+
         if most_popular and profile_stats:
             attrs["accuracy"] = "High - based on actual usage tracking"
             attrs["note"] = f"Based on {sum(profile_stats.values())} recorded brews"
@@ -616,7 +618,7 @@ class AidenMostPopularProfileSensor(FellowAidenBaseEntity, SensorEntity):
         else:
             attrs["accuracy"] = "Low - using default/first profile"
             attrs["note"] = "No historical usage data available yet"
-            
+
         return attrs
 
 
@@ -724,20 +726,38 @@ class AidenCurrentProfileSensor(FellowAidenBaseEntity, SensorEntity):
             "detection_method": self.detection_method,
             "confidence": self.confidence,
         }
-        
+
         # Add last used time if available
         if last_used_time:
             attrs["last_used_time"] = last_used_time
-        
+
         # Add last brew information if available
         last_brew_time = self.coordinator.history_manager.get_last_brew_time()
         if last_brew_time:
             attrs["last_brew_time"] = last_brew_time.isoformat()
-        
+
         # Add profile usage stats
         profile_stats = self.coordinator.history_manager.get_profile_usage_stats()
         if profile_stats:
             attrs["profile_usage_stats"] = profile_stats
             attrs["total_historical_brews"] = sum(profile_stats.values())
-        
+
         return attrs
+
+class AidenGameHighScoreSensor(AidenSensor):
+    """
+    Shows the game high score.
+    """
+
+    def __init__(
+        self,
+        coordinator: FellowAidenDataUpdateCoordinator,
+        entry: ConfigEntry
+    ) -> None:
+        """Initialize the game high score sensor."""
+        super().__init__(coordinator, entry, 'gameHighScore', 'Game High Score', None, 'mdi:counter')
+
+    @property
+    def entity_registry_visible_default(self) -> bool:
+        """Disable the high score sensor visibility by default."""
+        return False
